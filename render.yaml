@@ -1,0 +1,16 @@
+# Render blueprint. Dashboard -> New -> Blueprint -> pick this repo.
+# Render injects PORT at runtime; the Dockerfile CMD already honours ${PORT:-8000}.
+services:
+  - type: web
+    name: gridwise-api
+    runtime: docker
+    plan: free
+    region: singapore          # lowest latency from Dhaka
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeploy: false          # keep the judged deployment stable during the window
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false            # set this in the dashboard; never commit the value
+      - key: OPENAI_MODEL
+        value: gpt-4o-mini
