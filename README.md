@@ -2,6 +2,11 @@
 
 BUP CSE Fest 2026 Hackathon · Online Preliminary · Smart Campus Energy Optimization Challenge
 
+**Team gta_7** · Ishmam Tahmid · Farhan Tahsin Khan · Mahmudul Hasan · Kazi Badrul Hasan
+
+**Understand → Validate → Optimize → Verify.** The LLM handles language · guardrails handle
+trust · the LP handles the maths · the replay handles proof.
+
 A single HTTP service that reads free-text campus-operator notes with a language model,
 validates the extracted directives deterministically, applies them to a 24-hour energy
 scheduling problem, and returns a provably valid minimum-cost plan.
@@ -27,8 +32,10 @@ No login, VPN or manual approval is needed to reach it.
 |---|---|
 | Public pack, live | 18/18 interpretation · 10/10 valid · cost ratio **1.0000** |
 | Paraphrase corpus, live | **80/81** across 18 phrasing families |
-| Offline test suite | **233 passing** |
-| Latency | p95 ≈ 3 s, ≈ 2 s under 10-way concurrency |
+| Offline test suite | **383 passing** (1 skipped) across 15 adversarial categories |
+| Latency | p95 ≈ **3 s**, ≈ **2 s** under **20-way** concurrency |
+
+![Measured, not asserted — live numbers from the deployed service](docs/figures/06_measured.png)
 
 ---
 
@@ -59,8 +66,8 @@ cp .env.example .env               # then edit .env and set OPENAI_API_KEY
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-The service is ready in about two seconds; `GET /health` answers well inside the 60-second
-readiness requirement.
+The service is ready in **about two seconds**; `GET /health` answers well inside the
+60-second readiness requirement.
 
 ```bash
 curl -s http://127.0.0.1:8000/health
@@ -76,7 +83,7 @@ curl -s -X POST http://127.0.0.1:8000/optimize-energy \
 **Offline tests** — no API key, no network; the provider is stubbed.
 
 ```bash
-pytest -q        # 233 passed
+pytest -q        # 383 passed, 1 skipped
 ```
 
 **The public pack, against a running service** — posts all ten published cases, compares
@@ -111,6 +118,8 @@ ends in *until* is off by one hour" tells you exactly what to fix.
 
 ## The problem in one page
 
+![The challenge in one picture — input on the left, two outputs on the right, scored as two separable things](docs/figures/01_challenge.png)
+
 Each request is a synthetic 24-hour campus energy scenario — hourly demand, solar and
 tariff, plus a battery — and **1–3 free-text operator notes**. The service must do two
 separable things, scored separately:
@@ -130,6 +139,8 @@ The six directive types, and what each does to the maths:
 | `no_discharge_window` | discharge = 0 in those hours |
 | `max_grid_window` | `grid_kwh ≤ max_grid_kwh` in those hours |
 | `no_op` | the note changes nothing |
+
+![A closed vocabulary of six directives, plus the two conventions that decide most of the interpretation score](docs/figures/03_six_directives.png)
 
 **Two conventions decide most of the score:**
 
@@ -152,6 +163,8 @@ directive scores nothing. Validity first, then cost.
 ---
 
 ## Architecture
+
+![Five stages, five guarantees — Interpret, Guardrails, Optimize, Replay, Recover](docs/figures/02_architecture.png)
 
 Five stages. Each one has a single job and a guarantee it upholds, so a failure in one is
 contained by the next.
@@ -204,6 +217,8 @@ greedily. Five variables per hour: `grid`, `solar_used`, `charge`, `discharge`, 
 subject to the rules listed above plus the directive constraints, minimising
 `Σ grid[h] × tariff[h]`.
 
+![SAMPLE-01: 24-hour load profile (top) and battery charge/discharge (bottom), reference-optimal — note the exact 40 kWh discharge at hour 1, not the permitted 50](docs/figures/04_schedule_sample01.png)
+
 Charge and discharge are then netted into the single `battery_action` the response schema
 allows — energy-neutral, since the balance equation only ever sees `charge − discharge`.
 `grid_kwh` is recomputed from the balance equation after rounding, and the three totals are
@@ -232,7 +247,7 @@ still reported exactly as it was read — interpretation credit survives even wh
 application fails.
 
 Normal requests cost one solve. The subset search only runs on failure, and with at most
-three directives that is at most eight solves at ~30 ms each.
+three directives that is at most **eight solves at ~30 ms each**.
 
 ---
 
@@ -244,15 +259,17 @@ why they are the way they are.
 ### 1. The model reads clocks, code does arithmetic
 
 Originally the model produced the `hours` array itself. Live testing found a systematic
-boundary bug in **3 of 18** notes: "noon until 2 PM" came back as `[12, 13, 14]` (end
-included), and "6 PM until 10 PM" as `[18, 19, 20]` — the latter induced by the prompt's
-own worked example `"6 PM until 9 PM" -> [18, 19, 20]`, which invited pattern-matching on
-the `"6 PM until ..."` prefix.
+boundary bug in **3 of 18** notes on the paraphrase corpus: "noon until 2 PM" came back as
+`[12, 13, 14]` (end included), and "6 PM until 10 PM" as `[18, 19, 20]` — the latter induced
+by the prompt's own worked example `"6 PM until 9 PM" -> [18, 19, 20]`, which invited
+pattern-matching on the `"6 PM until ..."` prefix.
 
 Two of those three misses were worse than a lost mark: the plan looked *cheaper* than the
 reference because it optimised against a window one hour too short, then failed the judge's
 replay on the battery reserve at hour 21. **A cheaper-looking answer that is actually
 illegal.**
+
+![One note, end to end — the model emits hours [12, 13] and factor 0.25; the optimizer reshapes the midday solar ceiling and the replay re-checks solar_used against it before responding](docs/figures/05_solar_reduction.png)
 
 Moving the expansion into `expand_window()` eliminated the entire error class. Models read
 two clock times reliably and enumerate ranges unreliably.
@@ -262,16 +279,17 @@ two clock times reliably and enumerate ranges unreliably.
 The obvious approach is "charge when cheap, discharge when expensive". It cannot prove
 optimality and it quietly breaks under constraints. The LP makes validity a property of the
 model rather than something you hope your loop preserved, and it finds moves a heuristic
-never would — on SAMPLE-01 it discharges exactly 40 kWh (not the permitted 50) at hour 1 so
-that three consecutive cheap hours refill the battery to exactly capacity, and deliberately
-buys expensive energy at hour 13 because the rate limit means there is no other way to be
-full for the evening peak.
+never would — on SAMPLE-01 it discharges exactly **40 kWh** (not the permitted **50**) at
+hour 1 so that three consecutive cheap hours refill the battery to exactly capacity, and
+deliberately buys expensive energy at hour 13 because the rate limit means there is no
+other way to be full for the evening peak.
 
 ### 3. The self-check can veto, not just log
 
 It used to log violations and return the plan anyway. A probe with an impossible directive
-produced a plan with **24 violations returned as HTTP 200**. Now it drives the recovery in
-stage 5.
+produced a plan with **24 violations returned as HTTP 200** — the worst possible outcome,
+because it looked successful but failed the judge's replay on every hour. Now it drives
+the recovery in stage 5.
 
 ### 4. The fallback parser is for liveness, not accuracy
 
@@ -296,7 +314,7 @@ parser with time to spare.
 
 ## Testing
 
-**233 offline tests**, plus two live scripts. What each file is for:
+**383 offline tests**, plus two live scripts. What each file is for:
 
 | File | Covers |
 |---|---|
@@ -307,6 +325,7 @@ parser with time to spare.
 | `test_recovery.py` | What happens when directives cannot all be honoured |
 | `test_guardrail_fuzz.py` | Malformed model output of every shape — wrong types, duplicates, junk hours, out-of-range figures |
 | `test_edge_cases.py` | Degenerate batteries, flat/zero/negative tariffs, the request surface |
+| `test_adversarial.py` | **15 vulnerability classes** — prompt injection, guardrail bypass, unicode, numeric edges, info disclosure, concurrency, fallback-parser ReDoS, plan-summary injection |
 
 The suite is regression-tested, not just green: removing the fallback's unit-masking breaks
 3 tests, and flipping the window rule from exclusive to inclusive breaks 8.
@@ -332,10 +351,15 @@ repository, and none are baked into the Docker image.**
 | `PORT` | no | `8000` | Listen port |
 | `LOG_LEVEL` | no | `INFO` | Log verbosity |
 
-**Provider / model:** OpenAI, `gpt-5.1` by default, called through the official
+**Provider / model:** OpenAI, **`gpt-5.1`** by default, called through the official
 `openai` Python SDK with Structured Outputs at `temperature=0`. `gpt-5.1` currently
-scores 80/81 on the paraphrase corpus; a stronger model is one environment variable away if
-hidden wording proves harder.
+scores 80/81 on the paraphrase corpus; a stronger model is one environment variable away
+if hidden wording proves harder.
+
+**Model migration history.** The default moved `gpt-4o-mini` → **`gpt-4.1`** → **`gpt-5.1`**
+during the preliminary window as we found stronger models were cheaper to score on. The
+prompt is model-agnostic: every directive rule is in code or in the JSON schema, so a swap
+is a single environment variable, not a code change.
 
 ---
 
@@ -370,11 +394,11 @@ The judged deployment is `https://gridwise-api-gta-7.onrender.com`, built from t
 repository via `render.yaml` with `autoDeploy: false`, so the evaluated build stays fixed
 during the window. `OPENAI_API_KEY` is set in the Render dashboard and never committed.
 
-`render.yaml` is a free-tier blueprint. Because that tier sleeps after 15 minutes and needs
-30–60 s to wake — a cold start inside a 30 s judging limit is a failed request —
-`.github/workflows/keep-warm.yml` pings it every 5 minutes, with `scripts/keep_warm.py` as
-a local equivalent. Scheduled GitHub runs can be delayed under load, so treat the workflow
-as a backup to a real uptime monitor rather than the only defence.
+`render.yaml` is a free-tier blueprint. Because that tier **sleeps after 15 minutes** and
+needs **30–60 s to wake** — a cold start inside a 30 s judging limit is a failed request —
+`.github/workflows/keep-warm.yml` pings it **every 5 minutes**, with `scripts/keep_warm.py`
+as a local equivalent. Scheduled GitHub runs can be delayed under load, so treat the
+workflow as a backup to a real uptime monitor rather than the only defence.
 
 ---
 
@@ -441,8 +465,8 @@ Status codes: `200` success · `400` malformed or structurally invalid · `500` 
 | Any unhandled error | Controlled `500`; no stack traces, prompts, or configuration in the response |
 
 The LP solve runs in a worker thread, so concurrent hidden cases do not block the event
-loop. Twenty concurrent requests were measured at p95 ≈ 3 s with every plan still optimal
-and no fallback activations.
+loop. **20 concurrent** requests were measured at p95 ≈ **3 s** with every plan still
+optimal and no fallback activations.
 
 ---
 
@@ -462,7 +486,7 @@ scripts/
   paraphrase_bench.py Interpretation scored per phrasing family (needs a key)
   keep_warm.py        Keeps a free-tier host from sleeping between judge calls
 samples/              Organizer public sample cases
-tests/                233 offline tests + the paraphrase corpus
+tests/                383 offline tests + the paraphrase corpus
 render.yaml           Free-tier deployment blueprint
 Dockerfile            Fallback image; fails its build without a working CBC solver
 ```

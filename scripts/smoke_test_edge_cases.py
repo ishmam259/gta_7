@@ -5,7 +5,7 @@ import json
 import sys
 import time
 
-import requests
+import httpx
 
 
 def load_cases(json_path: str):
@@ -97,10 +97,10 @@ def main():
         start_time = time.time()
 
         try:
-            resp = requests.post(
+            resp = httpx.post(
                 endpoint,
                 json=payload,
-                timeout=10,
+                timeout=10.0,
             )
 
             elapsed_ms = (time.time() - start_time) * 1000
