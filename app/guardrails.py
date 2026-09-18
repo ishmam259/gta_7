@@ -74,6 +74,33 @@ def _clean_hours(raw: Any) -> tuple[int, ...]:
     return tuple(sorted(out))
 
 
+def _expand_window(raw_start: Any, raw_end: Any) -> tuple[int, ...]:
+    """Expand a half-open [start, end) window into whole hours.
+
+    Models are reliable at reading two clock times and unreliable at enumerating
+    the range between them, so the model reports the endpoints and this function
+    does the enumeration. Start is included, end is excluded.
+    """
+    if isinstance(raw_start, bool) or isinstance(raw_end, bool):
+        return ()
+    try:
+        start = int(raw_start)
+        end = int(raw_end)
+    except (TypeError, ValueError):
+        return ()
+
+    if not (0 <= start <= 23) or not (0 <= end <= 24):
+        return ()
+
+    if end == start:
+        # A degenerate window is most plausibly the single named hour.
+        return (start,)
+    if end > start:
+        return tuple(range(start, min(end, 24)))
+    # Wraps past midnight, e.g. 22:00 -> 02:00.
+    return tuple(range(start, 24)) + tuple(range(0, end))
+
+
 def _normalize_factor(raw: Any) -> float | None:
     """`factor` is the usable fraction REMAINING, in [0, 1].
 
@@ -108,7 +135,11 @@ def _build_directive(index: int, item: dict[str, Any], battery: Battery) -> Dire
     if directive_type not in SUPPORTED_TYPES:
         return None
 
-    hours = _clean_hours(item.get("hours"))
+    # Prefer the half-open window; fall back to an explicit list for the rare
+    # note that names non-contiguous hours.
+    hours = _expand_window(item.get("start_hour"), item.get("end_hour"))
+    if not hours:
+        hours = _clean_hours(item.get("hours"))
     if not hours:
         # A window directive with no valid hours cannot be applied to anything.
         return None

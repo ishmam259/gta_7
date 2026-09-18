@@ -48,6 +48,8 @@ DIRECTIVE_SCHEMA: dict[str, Any] = {
                     "required": [
                         "note_index",
                         "directive_type",
+                        "start_hour",
+                        "end_hour",
                         "hours",
                         "factor",
                         "minimum_energy_kwh",
@@ -70,11 +72,24 @@ DIRECTIVE_SCHEMA: dict[str, Any] = {
                                 "no_op",
                             ],
                         },
+                        "start_hour": {
+                            "type": ["integer", "null"],
+                            "description": (
+                                "24-hour start of the window, INCLUDED. Null only for no_op."
+                            ),
+                        },
+                        "end_hour": {
+                            "type": ["integer", "null"],
+                            "description": (
+                                "24-hour end of the window, EXCLUDED. '6 PM until 10 PM' has "
+                                "end_hour 22. Null only for no_op."
+                            ),
+                        },
                         "hours": {
                             "type": "array",
                             "description": (
-                                "Affected hours as unique integers 0-23 in ascending order. "
-                                "Empty list for no_op."
+                                "Leave EMPTY unless the note lists non-contiguous hours "
+                                "explicitly. Normally use start_hour/end_hour instead."
                             ),
                             "items": {"type": "integer"},
                         },
@@ -116,13 +131,31 @@ DIRECTIVE TYPES
 - max_grid_window: grid import may not exceed a limit during specific hours. Set `max_grid_kwh`.
 - no_op: the note does not affect today's 24-hour energy schedule.
 
-RULES
-1. Time windows are whole hours, start INCLUSIVE and end EXCLUSIVE. "1 PM to 3 PM" -> [13, 14]. "from 6 PM until 9 PM" -> [18, 19, 20]. "between 09:00 and 12:00" -> [9, 10, 11]. "during hour 14" -> [14].
+TIME WINDOWS - follow this procedure exactly, do not shortcut it
+1. Read the start time and the end time as written in the note.
+2. Convert each to a 24-hour integer on its own: 1 PM -> 13, 3 PM -> 15, 9 PM -> 21, 10 PM -> 22, 11 PM -> 23, noon -> 12, midnight -> 0, "09:00" -> 9, "15:00" -> 15.
+3. Put the first in `start_hour` and the second in `end_hour`, and leave `hours` as []. Deterministic code expands the range for you, so never enumerate hours yourself.
+4. The window is HALF-OPEN: `start_hour` IS included, `end_hour` is NOT.
+
+Worked examples - convert each endpoint independently, never copy a pattern from another example:
+  "from 1 PM to 3 PM"        -> start_hour 13, end_hour 15
+  "from noon until 2 PM"     -> start_hour 12, end_hour 14
+  "from 6 PM until 9 PM"     -> start_hour 18, end_hour 21
+  "from 6 PM until 10 PM"    -> start_hour 18, end_hour 22
+  "from 6 PM until 11 PM"    -> start_hour 18, end_hour 23
+  "between 09:00 and 12:00"  -> start_hour 9,  end_hour 12
+  "from 2 AM until 5 AM"     -> start_hour 2,  end_hour 5
+  "during hour 14"           -> start_hour 14, end_hour 15
+
+Use the `hours` array ONLY when a note names non-contiguous hours explicitly (e.g. "at 3 AM and again at 9 AM"). Otherwise leave it empty.
+
+OTHER RULES
+1. For no_op, set start_hour and end_hour to null and hours to [].
 2. `factor` is what REMAINS, not what is lost. "drops to 20%" -> 0.20. "an 80% reduction" -> 0.20. "roughly one-fifth of normal" -> 0.20. "cut by half" -> 0.50.
 3. Reserves given as a percentage refer to battery CAPACITY. With capacity 500 kWh, "keep at least 30%" -> 150.
 4. Notes about menus, schedules, registrations, staffing, next week, next month, or anything with no effect on today's electricity schedule are `no_op`: hours = [], all numeric fields null.
 5. Never invent a directive type outside the list. Never alter demand, tariff, or battery limits. If a note is energy-related but does not map cleanly onto one of the five real types, use no_op.
-6. Only ever emit hours in 0-23, unique, ascending.
+6. Every hour value you emit must be in 0-23 (end_hour may be 24 to mean "through the end of the day").
 7. A single note maps to exactly one directive. If a note mentions two rules, choose the one it states most directly.
 
 Be literal and precise about numbers and hour boundaries; paraphrased wording is expected."""

@@ -164,3 +164,47 @@ def test_fill_missing_entries_with_no_op() -> None:
     entries, directives = normalize_interpretations([], 3, battery)
     assert [e.note_index for e in entries] == [0, 1, 2]
     assert directives == []
+
+
+def test_half_open_window_expansion() -> None:
+    """The exact failure seen live: end-hour boundaries must not drift."""
+    from app.guardrails import _expand_window
+
+    assert _expand_window(13, 15) == (13, 14)          # 1 PM to 3 PM
+    assert _expand_window(12, 14) == (12, 13)          # noon until 2 PM
+    assert _expand_window(18, 21) == (18, 19, 20)      # 6 PM until 9 PM
+    assert _expand_window(18, 22) == (18, 19, 20, 21)  # 6 PM until 10 PM
+    assert _expand_window(9, 12) == (9, 10, 11)        # 09:00 to 12:00
+    assert _expand_window(2, 5) == (2, 3, 4)           # 2 AM until 5 AM
+    assert _expand_window(14, 15) == (14,)             # during hour 14
+    assert _expand_window(22, 2) == (22, 23, 0, 1)     # wraps past midnight
+    assert _expand_window(20, 24) == (20, 21, 22, 23)  # through end of day
+    assert _expand_window(None, None) == ()
+    assert _expand_window("x", 5) == ()
+    assert _expand_window(25, 30) == ()
+
+
+def test_window_takes_priority_over_enumerated_hours() -> None:
+    """If the model both enumerates and gives a window, trust the window."""
+    battery = Battery(
+        capacity_kwh=500,
+        initial_energy_kwh=200,
+        minimum_energy_kwh=50,
+        max_charge_kwh_per_hour=100,
+        max_discharge_kwh_per_hour=100,
+    )
+    raw = [
+        {
+            "note_index": 0,
+            "directive_type": "minimum_battery_reserve",
+            "start_hour": 18,
+            "end_hour": 22,
+            "hours": [18, 19, 20],  # the enumeration the model used to get wrong
+            "minimum_energy_kwh": 90,
+        }
+    ]
+    entries, _ = normalize_interpretations(raw, 1, battery)
+    assert entries[0].structured_adjustment == {
+        "hours": [18, 19, 20, 21],
+        "minimum_energy_kwh": 90.0,
+    }
