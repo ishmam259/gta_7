@@ -24,7 +24,7 @@ from .schemas import Battery, HourEntry
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "gpt-4o-mini"
+DEFAULT_MODEL = "gpt-4.1"
 
 
 class InterpreterUnavailable(RuntimeError):
