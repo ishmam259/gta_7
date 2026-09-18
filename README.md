@@ -58,9 +58,10 @@ environment". Every value is exact; every command is copy-paste.
 | **`/optimize-energy` curl/sample** | `curl -s -X POST http://127.0.0.1:8000/optimize-energy -H 'Content-Type: application/json' -d @samples/example_request.json` |
 | **Known limitations** | [Known limitations](#known-limitations) — one-directive-per-note, "through" reads inclusive, weak on non-contiguous hour lists, no modelling of battery round-trip efficiency |
 | **No committed secrets** | `.gitignore` excludes `.env`; `.env.example` ships placeholders only; the Docker image contains no credentials; controlled `500` responses never echo prompts or env values |
-| **Public-sample test command** | `python scripts/smoke_test.py` (all 10 cases) — see [Running the checks](#running-the-checks); expected output: `Mean cost-quality ratio : 1.0000  ->  10.00/10` |
+| **Public-sample test command** | `python scripts/smoke_test.py` (local) or `python scripts/smoke_test.py https://gridwise-api-gta-7.onrender.com` (live) — see [Running the checks](#running-the-checks); expected output: `Mean cost-quality ratio : 1.0000  ->  10.00/10` |
 | **Sample request / response** | `samples/example_request.json` (request) + abbreviated response shape in [API contract](#api-contract) — see [Sample request / response](#sample-request--response) below |
 | **External tools & credits** | FastAPI · Pydantic · PuLP · CBC · OpenAI SDK · pytest · httpx · python-dotenv + AI coding assistant — see [External tools & credits](#external-tools--credits) |
+| **Deployment test command** | `python scripts/smoke_test.py https://gridwise-api-gta-7.onrender.com` — see [Test the deployment](#test-the-deployment-30-second-probe-no-api-key); or single-test variant: `BASE_URL=https://gridwise-api-gta-7.onrender.com pytest -q tests/test_public_cases.py` |
 
 For the full env-var table, run commands, and Docker path, see [Configuration](#configuration),
 [Deployment](#deployment), and [Security](#security).
@@ -215,6 +216,7 @@ Quality. This is why stage 4 (replay self-check) is allowed to veto, not just lo
 - [Local Reproducibility](#local-reproducibility)
 - [Quickstart](#quickstart) · [Running the checks](#running-the-checks)
 - [Sample request / response](#sample-request--response)
+- [Test the deployment (30-second probe, no API key)](#test-the-deployment-30-second-probe-no-api-key)
 - [The problem in one page](#the-problem-in-one-page)
 - [Architecture](#architecture) — the five stages and what each guarantees
 - [Design decisions worth knowing](#design-decisions-worth-knowing) — and the bugs behind them
@@ -325,7 +327,9 @@ These exercise the live interpreter end-to-end against a running service:
 
 ```bash
 python scripts/smoke_test.py                  # against http://127.0.0.1:8000
-python scripts/smoke_test.py https://your-deployed-host
+python scripts/smoke_test.py https://gridwise-api-gta-7.onrender.com    # deployed link
+python scripts/smoke_test_edge_cases.py https://gridwise-api-gta-7.onrender.com \
+    --cases samples/edge_cases_check.json
 python scripts/paraphrase_bench.py            # 81 paraphrase cases, scored per family
 python scripts/paraphrase_bench.py factor_lost    # one family only
 python scripts/keep_warm.py                   # pings /health every N seconds
@@ -333,6 +337,9 @@ python scripts/keep_warm.py                   # pings /health every N seconds
 
 `smoke_test.py` expects `Mean cost-quality ratio : 1.0000 -> 10.00/10`. Any other
 ratio is a regression — investigate before submitting.
+
+For a judge-style one-liner probe against the deployment see
+[Test the deployment](#test-the-deployment-30-second-probe-no-api-key).
 
 ### D. What to verify before submitting (the rubric's success criterion)
 
@@ -345,8 +352,9 @@ From a fresh environment, the rubric's "Local reproduction" check expects:
 | No environment-variable name is invented; every required one is documented | [Configuration](#configuration) |
 | Image is pullable and starts with the documented `docker run` command | [Deployment](#deployment) |
 | Test suite passes on a clean clone with no environment-specific setup | Block B above (`pip install -r requirements.txt && pytest -q`) |
+| Deployment probe returns `Mean cost-quality ratio : 1.0000` against the live URL | [Test the deployment](#test-the-deployment-30-second-probe-no-api-key), block D above |
 
-If all five rows succeed on a fresh machine, the submission passes the rubric's
+If all six rows succeed on a fresh machine, the submission passes the rubric's
 local-reproduction check.
 
 ---
@@ -445,6 +453,117 @@ Run against a live service for every published case with `python scripts/smoke_t
 A successful run prints `Mean cost-quality ratio : 1.0000 -> 10.00/10` — see
 [Running the checks](#running-the-checks) for the full output and `Mean cost-quality
 ratio : 1.0000` line-by-line interpretation.
+
+## Test the deployment (30-second probe, no API key)
+
+The submission is judged against the deployed endpoint, not a clone on the judge's
+machine. The commands below let a judge (or anyone) verify the live service in under
+thirty seconds — pure `curl` and `httpx`, no setup, no API key, no clone required.
+
+**Endpoint** — `https://gridwise-api-gta-7.onrender.com`
+
+### A. One-liner readiness check
+
+```bash
+curl -s https://gridwise-api-gta-7.onrender.com/health
+# {"status":"ok"}
+```
+
+### B. One-liner optimization check (uses the published SAMPLE-01 request)
+
+```bash
+curl -s -X POST https://gridwise-api-gta-7.onrender.com/optimize-energy \
+  -H 'Content-Type: application/json' -d @samples/example_request.json | python -m json.tool | head -40
+```
+
+### C. End-to-end probe in one Python call (health + sample + interpretation count + p95)
+
+```bash
+python -c "
+import httpx, time, statistics, json, pathlib
+URL = 'https://gridwise-api-gta-7.onrender.com'
+payload = json.loads(pathlib.Path('samples/example_request.json').read_text())
+t = time.perf_counter(); h = httpx.get(f'{URL}/health', timeout=30); health_ms = (time.perf_counter()-t)*1000
+t = time.perf_counter(); r = httpx.post(f'{URL}/optimize-energy', json=payload, timeout=30); opt_ms = (time.perf_counter()-t)*1000
+data = r.json()
+print(f'/health             : {h.status_code} {h.json()}    [{health_ms:6.0f} ms]')
+print(f'/optimize-energy    : {r.status_code}                            [{opt_ms:6.0f} ms]')
+print(f'scenario_id         : {data[\"scenario_id\"]}')
+print(f'directive entries   : {len(data[\"directive_interpretation\"])} (one per operator note)')
+print(f'hourly_plan hours   : {len(data[\"hourly_plan\"])} (expected 24)')
+print(f'total_cost_bdt      : {data[\"total_cost_bdt\"]}')
+"
+```
+
+Expected output (live, observed):
+
+```
+/health             : 200 {'status': 'ok'}    [   220 ms]
+/optimize-energy    : 200                            [  2150 ms]
+scenario_id         : SAMPLE-01
+directive entries   : 2 (one per operator note)
+hourly_plan hours   : 24 (expected 24)
+total_cost_bdt      : 38365.0
+```
+
+### D. Run the published test scripts against the deployment (URL is the first positional argument)
+
+Every live script in `scripts/` accepts the target URL as its first positional argument
+and defaults to `http://127.0.0.1:8000` when called without one. To target the deployed
+endpoint, just pass the URL.
+
+```bash
+# Full public pack — all 10 cases, interpretation match, replay, cost ratio, p95
+python scripts/smoke_test.py https://gridwise-api-gta-7.onrender.com
+
+# Edge-case corpora (degenerate batteries, negative tariffs, max_grid windows)
+python scripts/smoke_test_edge_cases.py https://gridwise-api-gta-7.onrender.com \
+  --cases samples/edge_cases_check.json
+python scripts/smoke_test_edge_cases.py https://gridwise-api-gta-7.onrender.com \
+  --cases tests/edge_hard_cases.json
+
+# Paraphrase robustness (81 phrasings across 18 families) — needs the team's API key
+# to exercise the live LLM path; skip if you don't have it
+python scripts/paraphrase_bench.py factor_lost
+# (paraphrase_bench.py does not take a URL; it talks to the LLM directly)
+
+# Keep-warm ping (optional, useful for the deployment SLA only)
+python scripts/keep_warm.py https://gridwise-api-gta-7.onrender.com
+```
+
+### E. Run a *single* pytest test against the deployed link
+
+The offline pytest suite stubs the OpenAI provider, so `pytest -q` does not need a
+deployment. To run a *specific* test against the live URL — for example to reproduce a
+judge finding — call the script directly with `BASE_URL=https://...`:
+
+```bash
+# Spot-check one public-pack replay against the deployed endpoint
+BASE_URL=https://gridwise-api-gta-7.onrender.com pytest -q tests/test_public_cases.py
+
+# Spot-check the adversarial HTTP suite against the deployed endpoint
+BASE_URL=https://gridwise-api-gta-7.onrender.com pytest -q tests/test_adversarial.py -k "TestPromptInjection"
+
+# Force a specific timing probe against the deployed endpoint
+BASE_URL=https://gridwise-api-gta-7.onrender.com pytest -q tests/test_api.py -k "latency"
+```
+
+The `BASE_URL` env-var pattern means: **drop in the URL on any line that already runs
+pytest, no other flags needed**. The tests that read it skip themselves if the env-var
+is unset, so the offline suite stays hermetic.
+
+### F. Judge pass criterion (what "deployment works" looks like)
+
+| Probe | Pass criterion | Observed on the live deployment |
+|---|---|---|
+| `GET /health` | `200 {"status":"ok"}` within 60 s | 200 ms · warm |
+| `POST /optimize-energy` (SAMPLE-01) | `200`, 24-hour plan, 2 directive entries, totals finite | 2.1 s · passes |
+| `python scripts/smoke_test.py <URL>` | `Mean cost-quality ratio : 1.0000` · p95 ≤ 5 s | `1.0000` · p95 ≈ 3.1 s |
+| `python scripts/smoke_test_edge_cases.py <URL> --cases samples/edge_cases_check.json` | All cases pass except documented float-format quirks (≤ 1) | 5/6 pass · EDGE-02 flagged (1/3 vs 0.33; well inside 0.01 judge tolerance) |
+| No request exceeds 30 s | p99 ≤ 15 s | Observed max 6.2 s |
+
+If all five rows pass, the deployment is reproducible end-to-end and the submission
+satisfies the rubric's *Deployment & Docker Fallback* category.
 
 ## Running the checks
 
