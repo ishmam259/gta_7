@@ -733,6 +733,25 @@ rule is in code or in the JSON schema, so a swap is a single environment variabl
 
 ## Deployment
 
+### Docker fallback image
+
+| | |
+|---|---|
+| Registry | Docker Hub, **public** — no credentials needed to pull |
+| Image | `ishmam259/gridwise-api:v1` (also `:latest`) |
+| Digest | `sha256:ac0e5bddc0f2fda05d2f75cc48c821d7450e95f9ecef3f9d1fbe0803c88baba3` |
+| Exposed port | `8000`, bound to `0.0.0.0` |
+| Required env | `OPENAI_API_KEY` |
+| Optional env | `OPENAI_MODEL` (the image already defaults to `gpt-5.1`), `PORT`, `LOG_LEVEL` |
+
+Pin the digest if you want the exact evaluated build:
+
+```bash
+docker pull ishmam259/gridwise-api@sha256:ac0e5bddc0f2fda05d2f75cc48c821d7450e95f9ecef3f9d1fbe0803c88baba3
+```
+
+Or by tag:
+
 ```bash
 docker pull ishmam259/gridwise-api:v1
 docker run --rm -p 8000:8000 \
