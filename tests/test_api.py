@@ -186,3 +186,12 @@ def test_root_does_not_disturb_the_judged_contract() -> None:
     """Adding / must not change /health or the 404 behaviour of unknown paths."""
     assert client.get("/health").json() == {"status": "ok"}
     assert client.get("/not-a-real-path").status_code == 404
+
+
+def test_head_requests_are_accepted_not_405() -> None:
+    """Uptime monitors and readiness probes send HEAD; FastAPI's @app.get does not
+    register it automatically, which previously made monitors report the service down."""
+    assert client.head("/health").status_code == 200
+    assert client.head("/").status_code == 200
+    # GET behaviour is unchanged.
+    assert client.get("/health").json() == {"status": "ok"}

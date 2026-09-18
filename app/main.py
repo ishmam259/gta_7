@@ -88,7 +88,7 @@ async def _unhandled_error(_: Request, exc: Exception) -> JSONResponse:
     )
 
 
-@app.get("/")
+@app.api_route("/", methods=["GET", "HEAD"])
 async def root() -> dict[str, object]:
     """Self-documenting landing response.
 
@@ -107,8 +107,15 @@ async def root() -> dict[str, object]:
     }
 
 
-@app.get("/health")
+@app.api_route("/health", methods=["GET", "HEAD"])
 async def health() -> dict[str, str]:
+    """Readiness probe.
+
+    HEAD is registered alongside GET because uptime monitors and container
+    readiness probes commonly send HEAD to avoid transferring a body. FastAPI's
+    `@app.get` does not add HEAD automatically the way a plain Starlette route
+    does, so without this the service answers 405 and monitors report it down.
+    """
     return {"status": "ok"}
 
 
