@@ -185,8 +185,18 @@ the three totals are derived from `hourly_plan` itself and cannot disagree with 
 
 Before answering, the service replays its own schedule the way the judge does — every
 directive, the energy balance, battery bounds and rate limits, effective-solar ceilings,
-and end-of-day neutrality — and logs any violation. The same module backs the test suite
-and `scripts/smoke_test.py`.
+and end-of-day neutrality — and a plan that breaks any of them is never returned.
+
+If the interpreted directives cannot all be satisfied at once, the service does not ship
+the schedule anyway. It searches for the largest subset of directives that yields a
+genuinely valid plan, prefers the cheapest such plan, and names the directive it had to
+leave out in `plan_summary`. A real scenario is guaranteed feasible under its ground
+truth, so an infeasible set means a note was misread; dropping a directive we invented is
+recoverable, whereas returning a schedule that visibly breaks one never is. The reported
+`directive_interpretation` is untouched either way, so a directive that could not be
+applied is still reported exactly as it was read.
+
+The same module backs the test suite and `scripts/smoke_test.py`.
 
 ---
 
@@ -198,7 +208,8 @@ and `scripts/smoke_test.py`.
 | Model returns an unsupported or unparseable directive | Guardrails downgrade that note to `no_op`; no invented constraint |
 | Provider outage, timeout, or exhausted quota | Logged, then a deterministic emergency parser keeps the service answering `200` |
 | Provider slow rather than down | `OPENAI_TOTAL_BUDGET_SECONDS` caps the whole round trip (retries and backoff included) and hands over to the emergency parser, so a slow provider cannot push a response past the 30-second limit |
-| Directive set somehow infeasible | Penalised-slack LP returns a best-effort plan instead of a `500` |
+| Directive set cannot all be satisfied | The smallest number of directives is dropped until the schedule is genuinely valid; the omission is logged and stated in `plan_summary` |
+| Nothing is schedulable at all | Penalised-slack LP returns a best-effort plan instead of a `500` |
 | Any unhandled error | Controlled `500`; no stack traces, prompts, or configuration in the response |
 
 The LP solve runs in a worker thread, so concurrent hidden cases do not block the event loop.
@@ -294,8 +305,13 @@ and validation strategy are the team's own.
   on hour-window paraphrases.
 * A `solar_reduction` note that states a window but no percentage yields `factor = 1.0`,
   which is mathematically inert but still reported as an applied directive.
-* The emergency parser covers the common phrasings in the public pack but is deliberately
-  conservative — it prefers `no_op` to a guessed constraint.
+* The emergency parser exists for liveness, not accuracy. It handles the phrasings in the
+  public pack, whole-day wording, windows that wrap past midnight, and figures stated either
+  way round ("a 20% drop" and "drops to 20%"), and it will not read a quantity such as
+  `20 kWh` as a clock hour. It still has no grasp of durations ("for the next three hours"),
+  named windows ("the evening peak"), spelled-out numerals ("six PM"), or fractions outside
+  its small table ("three quarters"), and it maps a note to at most one directive. It prefers
+  `no_op` to a guessed constraint, which is the direction that fails safely.
 * Battery round-trip efficiency is not modelled, matching the Problem Statement's rules.
 
 ## Security
