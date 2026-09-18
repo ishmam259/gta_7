@@ -325,15 +325,15 @@ repository, and none are baked into the Docker image.**
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
 | `OPENAI_API_KEY` | **yes** | — | Credential for the operator-note interpreter |
-| `OPENAI_MODEL` | no | `gpt-4.1` | Interpretation model |
+| `OPENAI_MODEL` | no | `gpt-5.1` | Interpretation model |
 | `OPENAI_TIMEOUT_SECONDS` | no | `8` | Per-call provider timeout |
 | `OPENAI_MAX_RETRIES` | no | `1` | Provider retry budget |
 | `INTERPRETER_DEADLINE_SECONDS` | no | `15` | Hard ceiling on the whole interpretation step |
 | `PORT` | no | `8000` | Listen port |
 | `LOG_LEVEL` | no | `INFO` | Log verbosity |
 
-**Provider / model:** OpenAI, `gpt-4.1` by default, called through the official
-`openai` Python SDK with Structured Outputs at `temperature=0`. `gpt-4.1` currently
+**Provider / model:** OpenAI, `gpt-5.1` by default, called through the official
+`openai` Python SDK with Structured Outputs at `temperature=0`. `gpt-5.1` currently
 scores 80/81 on the paraphrase corpus; a stronger model is one environment variable away if
 hidden wording proves harder.
 
