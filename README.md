@@ -343,7 +343,10 @@ hidden wording proves harder.
 
 ```bash
 docker pull ishmam259/gridwise-api:v1
-docker run --rm -p 8000:8000 -e OPENAI_API_KEY=sk-... ishmam259/gridwise-api:v1
+docker run --rm -p 8000:8000 \
+  -e OPENAI_API_KEY=sk-... \
+  -e OPENAI_MODEL=gpt-5.1 \
+  ishmam259/gridwise-api:v1
 curl -s http://127.0.0.1:8000/health
 # {"status":"ok"}
 ```
@@ -352,7 +355,10 @@ Build locally:
 
 ```bash
 docker build -t gridwise-api:local .
-docker run --rm -p 8000:8000 -e OPENAI_API_KEY=sk-... gridwise-api:local
+docker run --rm -p 8000:8000 \
+  -e OPENAI_API_KEY=sk-... \
+  -e OPENAI_MODEL=gpt-5.1 \
+  gridwise-api:local
 ```
 
 The image exposes port 8000, binds `0.0.0.0`, contains no credentials, and fails its own
