@@ -12,6 +12,15 @@ operator notes ──▶ LLM interpretation ──▶ deterministic guardrails �
                     JSON schema output                                                     and it can veto
 ```
 
+**Deployed endpoint** — `https://gridwise-api-gta-7.onrender.com`
+
+```bash
+curl -s https://gridwise-api-gta-7.onrender.com/health
+# {"status":"ok"}
+```
+
+No login, VPN or manual approval is needed to reach it.
+
 **Current measured state**
 
 | | |
@@ -350,6 +359,10 @@ The image exposes port 8000, binds `0.0.0.0`, contains no credentials, and fails
 build if the CBC solver binary is not present. It is 330 MB and was verified end to end:
 `/health` ready, all ten public cases valid at cost ratio 1.0000, `PORT` override honoured,
 and a deliberately invalid key confirmed to degrade to `200` rather than erroring.
+
+The judged deployment is `https://gridwise-api-gta-7.onrender.com`, built from this
+repository via `render.yaml` with `autoDeploy: false`, so the evaluated build stays fixed
+during the window. `OPENAI_API_KEY` is set in the Render dashboard and never committed.
 
 `render.yaml` is a free-tier blueprint. Because that tier sleeps after 15 minutes and needs
 30–60 s to wake — a cold start inside a 30 s judging limit is a failed request —
