@@ -26,8 +26,8 @@ No login, VPN or manual approval is needed to reach it.
 | | |
 |---|---|
 | Public pack, live | 18/18 interpretation · 10/10 valid · cost ratio **1.0000** |
-| Paraphrase corpus, live | **80/81** across 18 phrasing families |
-| Offline test suite | **233 passing** |
+| Paraphrase corpus, live | **81/81** across 18 phrasing families |
+| Offline test suite | **382 passing** |
 | Latency | p95 ≈ 3 s, ≈ 2 s under 10-way concurrency |
 
 ---
@@ -76,7 +76,7 @@ curl -s -X POST http://127.0.0.1:8000/optimize-energy \
 **Offline tests** — no API key, no network; the provider is stubbed.
 
 ```bash
-pytest -q        # 233 passed
+pytest -q        # 382 passed, 2 skipped
 ```
 
 **The public pack, against a running service** — posts all ten published cases, compares
@@ -296,7 +296,7 @@ parser with time to spare.
 
 ## Testing
 
-**233 offline tests**, plus two live scripts. What each file is for:
+**382 offline tests**, plus two live scripts. What each file is for:
 
 | File | Covers |
 |---|---|
@@ -468,7 +468,7 @@ scripts/
   paraphrase_bench.py Interpretation scored per phrasing family (needs a key)
   keep_warm.py        Keeps a free-tier host from sleeping between judge calls
 samples/              Organizer public sample cases
-tests/                233 offline tests + the paraphrase corpus
+tests/                382 offline tests + the paraphrase corpus
 render.yaml           Free-tier deployment blueprint
 Dockerfile            Fallback image; fails its build without a working CBC solver
 ```
