@@ -75,21 +75,25 @@ DIRECTIVE_SCHEMA: dict[str, Any] = {
                         "start_hour": {
                             "type": ["integer", "null"],
                             "description": (
-                                "24-hour start of the window, INCLUDED. Null only for no_op."
+                                "Start of a CONTINUOUS period on a 24-hour clock, INCLUDED. "
+                                "Null for no_op, and null when the note names separate moments "
+                                "rather than one unbroken stretch (use `hours` for those)."
                             ),
                         },
                         "end_hour": {
                             "type": ["integer", "null"],
                             "description": (
-                                "24-hour end of the window, EXCLUDED. '6 PM until 10 PM' has "
-                                "end_hour 22. Null only for no_op."
+                                "End of a CONTINUOUS period on a 24-hour clock, EXCLUDED. "
+                                "'6 PM until 10 PM' has end_hour 22. Null for no_op, and null "
+                                "when the note names separate moments (use `hours` for those)."
                             ),
                         },
                         "hours": {
                             "type": "array",
                             "description": (
-                                "Leave EMPTY unless the note lists non-contiguous hours "
-                                "explicitly. Normally use start_hour/end_hour instead."
+                                "The hours a note names as SEPARATE moments rather than as one "
+                                "continuous period: 'at 10 AM and again at 2 PM' -> [10, 14]. "
+                                "Empty when start_hour/end_hour are used, and for no_op."
                             ),
                             "items": {"type": "integer"},
                         },
@@ -131,7 +135,27 @@ DIRECTIVE TYPES
 - max_grid_window: grid import may not exceed a limit during specific hours. Set `max_grid_kwh`.
 - no_op: the note does not affect today's 24-hour energy schedule.
 
-TIME WINDOWS - follow this procedure exactly, do not shortcut it
+WHICH TIME FORM DOES THE NOTE USE? Decide this first, before anything else.
+
+(a) A CONTINUOUS period -- one unbroken stretch of hours. Signalled by "from X to Y",
+    "from X until Y", "between X and Y", "X - Y", "during the X to Y window", "all day".
+    -> Use start_hour and end_hour. Leave `hours` empty.
+
+(b) SEPARATE moments -- two or more distinct times that are not one stretch. Signalled by
+    "at X and again at Y", "at X and at Y", "in hours A, B and C", "at X, Y and Z".
+    -> Fill `hours` with every hour named. Leave start_hour and end_hour NULL.
+      "at 10 AM and again at 2 PM"       -> hours [10, 14]      NOT 10 to 14
+      "at 3 AM and again at 9 AM"        -> hours [3, 9]        NOT 3 to 9
+      "in hours 9, 13 and 17"            -> hours [9, 13, 17]   NOT 9 to 17
+      "shut down at 11 AM and at 4 PM"   -> hours [11, 16]      NOT 11 to 16
+
+    "and" between two clock times usually means (b), not a range. Only "between X and Y"
+    turns "and" into a range. If the note describes something happening twice, it is (b):
+    two one-hour events, not everything in between.
+
+Never use both forms for one note, and never keep only the first hour of a list.
+
+TIME WINDOWS - for form (a) only, follow this procedure exactly, do not shortcut it
 1. Read the start time and the end time as written in the note.
 2. Convert each to a 24-hour integer on its own: 1 PM -> 13, 3 PM -> 15, 9 PM -> 21, 10 PM -> 22, 11 PM -> 23, noon -> 12, midnight -> 0, "09:00" -> 9, "15:00" -> 15.
 3. Put the first in `start_hour` and the second in `end_hour`, and leave `hours` as []. Deterministic code expands the range for you, so never enumerate hours yourself.
@@ -164,7 +188,12 @@ OTHER RULES
 1. For no_op, set start_hour and end_hour to null and hours to [].
 2. `factor` is what REMAINS, not what is lost. "drops to 20%" -> 0.20. "an 80% reduction" -> 0.20. "roughly one-fifth of normal" -> 0.20. "cut by half" -> 0.50.
 3. Reserves given as a percentage refer to battery CAPACITY. With capacity 500 kWh, "keep at least 30%" -> 150.
-4. Notes about menus, schedules, registrations, staffing, next week, next month, or anything with no effect on today's electricity schedule are `no_op`: hours = [], all numeric fields null.
+4. Only TODAY's 24 hours exist. A note describing something on any other day is `no_op`
+   even when it names precise hours: "scheduled for tomorrow between 10 AM and 2 PM",
+   "yesterday's window has been lifted", "next Monday", "over the weekend", "from next
+   month". Check for a day reference before you read the clock times. Notes about menus,
+   registrations, staffing, bookings, or anything else with no effect on today's
+   electricity schedule are `no_op` too: hours = [], all numeric fields null.
 5. Never invent a directive type outside the list. Never alter demand, tariff, or battery capacity or rate limits, and note that selling or exporting power back to the grid is not part of this problem at all. A note about any of those is no_op even when it mentions solar or the battery: "we can export surplus solar back to the grid from 11 AM to 2 PM" is no_op, not a solar_reduction.
 6. Every hour value you emit must be in 0-23 (end_hour may be 24 to mean "through the end of the day").
 7. A single note maps to exactly one directive. If a note mentions two rules, choose the one it states most directly.
