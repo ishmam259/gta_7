@@ -12,7 +12,9 @@ name: Keep service warm
 
 on:
   schedule:
-    - cron: "*/10 * * * *"
+    # Every 5 minutes, GitHub's shortest allowed interval. Render idles at 15
+    # minutes, so this tolerates two consecutive delayed or dropped runs.
+    - cron: "*/5 * * * *"
   workflow_dispatch: # lets you trigger a ping by hand from the Actions tab
 
 concurrency:
