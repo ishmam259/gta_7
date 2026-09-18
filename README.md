@@ -333,9 +333,15 @@ repository, and none are baked into the Docker image.**
 | `LOG_LEVEL` | no | `INFO` | Log verbosity |
 
 **Provider / model:** OpenAI, `gpt-5.1` by default, called through the official
-`openai` Python SDK with Structured Outputs at `temperature=0`. `gpt-5.1` currently
-scores 80/81 on the paraphrase corpus; a stronger model is one environment variable away if
-hidden wording proves harder.
+`openai` Python SDK with Structured Outputs. Deterministic decoding (`temperature=0`)
+is requested where the model allows it; reasoning-class models reject any non-default
+temperature, so the call retries once without it rather than losing the model — see
+`_create_with_temperature_fallback`.
+
+`gpt-5.1` scores **81/81** on the paraphrase corpus. `gpt-4.1` also scores 81/81 and is
+faster (p95 2.2s against 3.5s end to end), so either is a defensible choice and the switch
+is one environment variable. We kept `gpt-5.1` because a saturated corpus cannot rank the
+two, and the stronger model is the better bet against unseen phrasings.
 
 ---
 
