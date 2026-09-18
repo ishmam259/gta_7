@@ -81,8 +81,9 @@ repository, and none are baked into the Docker image.**
 |---|---|---|---|
 | `OPENAI_API_KEY` | **yes** | — | Credential for the operator-note interpreter |
 | `OPENAI_MODEL` | no | `gpt-4o-mini` | Interpretation model |
-| `OPENAI_TIMEOUT_SECONDS` | no | `12` | Per-call provider timeout |
-| `OPENAI_MAX_RETRIES` | no | `2` | Provider retry budget |
+| `OPENAI_TIMEOUT_SECONDS` | no | `8` | Per-call provider timeout |
+| `OPENAI_MAX_RETRIES` | no | `1` | Provider retry budget |
+| `INTERPRETER_DEADLINE_SECONDS` | no | `15` | Hard ceiling on the whole interpretation step |
 | `PORT` | no | `8000` | Listen port |
 | `LOG_LEVEL` | no | `INFO` | Log verbosity |
 
@@ -178,6 +179,7 @@ and `scripts/smoke_test.py`.
 | Malformed JSON / structurally invalid request | `400` with a trimmed, stringified detail — never the raw body |
 | Model returns an unsupported or unparseable directive | Guardrails downgrade that note to `no_op`; no invented constraint |
 | Provider outage, timeout, or exhausted quota | Logged, then a deterministic emergency parser keeps the service answering `200` |
+| Provider hangs or rate-limits | `INTERPRETER_DEADLINE_SECONDS` caps the whole interpretation step, so per-call timeout × retries can never approach the 30s request limit |
 | Directive set somehow infeasible | Penalised-slack LP returns a best-effort plan instead of a `500` |
 | Any unhandled error | Controlled `500`; no stack traces, prompts, or configuration in the response |
 

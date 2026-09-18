@@ -7,6 +7,7 @@ real interpreter is exercised by `scripts/smoke_test.py` against a live service.
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -124,6 +125,40 @@ def test_malformed_requests_return_400() -> None:
     blank_note = json.loads(json.dumps(CASES[0]["input"]))
     blank_note["operator_notes"] = ["   "]
     assert client.post("/optimize-energy", json=blank_note).status_code == 400
+
+
+def test_interpreter_deadline_cuts_off_a_hanging_provider(monkeypatch) -> None:
+    """A slow provider must not push the request past the 30s judge limit."""
+    import asyncio
+
+    from app.interpreter import OperatorNoteInterpreter
+    from app.schemas import OptimizeRequest
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-a-real-key")
+    monkeypatch.setenv("INTERPRETER_DEADLINE_SECONDS", "0.2")
+    interpreter = OperatorNoteInterpreter()
+
+    class _Completions:
+        async def create(self, **_kwargs):
+            await asyncio.sleep(30)  # provider that never answers
+
+    class _Chat:
+        completions = _Completions()
+
+    class _Client:
+        chat = _Chat()
+
+    interpreter._client = _Client()
+
+    request = OptimizeRequest.model_validate(CASES[0]["input"])
+    started = time.perf_counter()
+    with pytest.raises(InterpreterUnavailable, match="deadline"):
+        asyncio.run(
+            interpreter.interpret(
+                request.operator_notes, request.hours_in_order(), request.battery
+            )
+        )
+    assert time.perf_counter() - started < 5, "the deadline did not fire"
 
 
 def test_repeated_requests_are_stable(stub_interpreter) -> None:
