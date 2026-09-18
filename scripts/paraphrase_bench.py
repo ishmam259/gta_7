@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+import time
 from collections import defaultdict
 from pathlib import Path
 
@@ -102,15 +103,18 @@ async def main() -> int:
     passed: dict[str, int] = defaultdict(int)
     total: dict[str, int] = defaultdict(int)
     failures: list[str] = []
+    timings: list[float] = []
 
     for start in range(0, len(cases), BATCH):
         batch = cases[start : start + BATCH]
         notes = [c["note"] for c in batch]
+        started = time.perf_counter()
         try:
             raw = await interpreter.interpret(notes, HOURS, BATTERY)
         except InterpreterUnavailable as exc:
             print(f"  provider unavailable: {exc}")
             return 1
+        timings.append(time.perf_counter() - started)
         entries, _directives = normalize_interpretations(raw, len(notes), BATTERY)
 
         for case, entry in zip(batch, entries):
@@ -137,6 +141,20 @@ async def main() -> int:
     if failures:
         print("\nfailures")
         print("\n".join(failures))
+
+    if timings:
+        ordered = sorted(timings)
+        median = ordered[len(ordered) // 2]
+        p95 = ordered[min(len(ordered) - 1, int(0.95 * len(ordered)))]
+        # One interpretation call per batch of 3 notes, which is what a real
+        # request carries. The LP solve and network add to this end to end.
+        print("")
+        print(
+            f"interpretation latency  median {median:.2f}s | p95 {p95:.2f}s | "
+            f"worst {ordered[-1]:.2f}s  over {len(ordered)} calls"
+        )
+        budget = "fits the 5s band" if p95 <= 4 else "TOO SLOW once the LP solve is added"
+        print(f"  -> {budget}")
 
     grand_ok, grand_n = sum(passed.values()), sum(total.values())
     print(f"\noverall {grand_ok}/{grand_n}  ({100 * grand_ok / grand_n:.1f}%)")

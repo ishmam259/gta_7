@@ -207,6 +207,7 @@ class OperatorNoteInterpreter:
         # failures (429/5xx), which the judge counts as a failed request. We would
         # rather fall back early and still answer than time out.
         self.deadline = float(os.getenv("INTERPRETER_DEADLINE_SECONDS", "15"))
+        self._omit_temperature = False
         self._client: AsyncOpenAI | None = (
             AsyncOpenAI(api_key=self._api_key, timeout=timeout, max_retries=retries)
             if self._api_key
@@ -216,6 +217,28 @@ class OperatorNoteInterpreter:
     @property
     def configured(self) -> bool:
         return self._client is not None
+
+    async def _create_with_temperature_fallback(self, kwargs: dict[str, Any]):
+        """Issue the call, retrying once without `temperature` on a 400.
+
+        Whether a model accepts `temperature` is not something we can infer from
+        its name -- the families keep changing -- so we let the provider tell us
+        and remember the answer for the life of the process.
+        """
+        assert self._client is not None
+        try:
+            return await self._client.chat.completions.create(**kwargs)
+        except Exception as exc:
+            unsupported = "temperature" in str(exc).lower() and "temperature" in kwargs
+            if not unsupported:
+                raise
+            logger.info(
+                "%s rejected temperature; retrying without it and omitting it from now on",
+                kwargs.get("model"),
+            )
+            self._omit_temperature = True
+            kwargs.pop("temperature", None)
+            return await self._client.chat.completions.create(**kwargs)
 
     async def interpret(
         self,
@@ -228,16 +251,24 @@ class OperatorNoteInterpreter:
             raise InterpreterUnavailable("OPENAI_API_KEY is not configured")
 
         try:
+            messages = [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": _build_user_prompt(notes, hours, battery)},
+            ]
+            kwargs: dict[str, Any] = {
+                "model": self.model,
+                "messages": messages,
+                "response_format": {"type": "json_schema", "json_schema": DIRECTIVE_SCHEMA},
+            }
+            # Reasoning-class models (o1/o3 and the gpt-5 family) reject any
+            # temperature other than the default and answer 400. We ask for
+            # deterministic decoding where it is allowed, and drop it where it is
+            # not rather than losing the model entirely.
+            if not self._omit_temperature:
+                kwargs["temperature"] = 0
+
             completion = await asyncio.wait_for(
-                self._client.chat.completions.create(
-                    model=self.model,
-                    temperature=0,
-                    messages=[
-                        {"role": "system", "content": SYSTEM_PROMPT},
-                        {"role": "user", "content": _build_user_prompt(notes, hours, battery)},
-                    ],
-                    response_format={"type": "json_schema", "json_schema": DIRECTIVE_SCHEMA},
-                ),
+                self._create_with_temperature_fallback(kwargs),
                 timeout=self.deadline,
             )
         except asyncio.TimeoutError as exc:
