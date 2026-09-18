@@ -31,9 +31,9 @@ No login, VPN or manual approval is needed to reach it.
 | | |
 |---|---|
 | Public pack, live | 18/18 interpretation · 10/10 valid · cost ratio **1.0000** |
-| Paraphrase corpus, live | **80/81** across 18 phrasing families |
+| Paraphrase corpus, live | **81/81** across 18 phrasing families |
 | Offline test suite | **383 passing** (1 skipped) across 15 adversarial categories |
-| Latency | p95 ≈ **3 s**, ≈ **2 s** under **20-way** concurrency |
+| Latency | p95 ≈ **2.4 s**, ≈ 2 s under 10-way concurrency |
 
 ![Measured, not asserted — live numbers from the deployed service](docs/figures/06_measured.png)
 
@@ -352,14 +352,14 @@ repository, and none are baked into the Docker image.**
 | `LOG_LEVEL` | no | `INFO` | Log verbosity |
 
 **Provider / model:** OpenAI, **`gpt-5.1`** by default, called through the official
-`openai` Python SDK with Structured Outputs at `temperature=0`. `gpt-5.1` currently
-scores 80/81 on the paraphrase corpus; a stronger model is one environment variable away
-if hidden wording proves harder.
+`openai` Python SDK with Structured Outputs. Deterministic decoding (`temperature=0`)
+is requested where the model allows it; reasoning-class models reject any non-default
+temperature, so the call retries once without it rather than losing the model — see
+`_create_with_temperature_fallback`.
 
-**Model migration history.** The default moved `gpt-4o-mini` → **`gpt-4.1`** → **`gpt-5.1`**
-during the preliminary window as we found stronger models were cheaper to score on. The
-prompt is model-agnostic: every directive rule is in code or in the JSON schema, so a swap
-is a single environment variable, not a code change.
+`gpt-5.1` scores **81/81** on the paraphrase corpus; a stronger model is one environment
+variable away if hidden wording proves harder. The prompt is model-agnostic: every directive
+rule is in code or in the JSON schema, so a swap is a single environment variable.
 
 ---
 

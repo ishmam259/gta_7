@@ -26,10 +26,17 @@ def main() -> None:
     doc = pymupdf.open(PDF)
     page = doc[12]  # "Measured, not asserted" is slide 13 (0-indexed 12)
 
-    # The tile contains "233" and "10-way load" which we want to update.
+    # The tile had stale "233" / "80/81" / "≈3 s" / "20-way load" before.
+    # Earlier refresh already updated "233" -> "383" and "10-way" -> "20-way".
+    # Now revert 20-way -> 10-way (teammate's measurement) and 80/81 -> 81/81.
+    # Also update p95 "3 s" -> "2.4 s" (the ≈ glyph is its own font span, leave it alone).
+    # IMPORTANT: only replace the numeric/word spans, never the ≈ glyph
+    # (replacing it produces a missing-glyph '?' artifact).
     replacements = {
-        "233":   "383",            # actual test count (baseline + adversarial suite)
-        "10-way load": "20-way load",  # measured concurrency
+        "233": "383",                    # 233 offline tests -> 383 (post-adversarial-suite)
+        "80/81": "81/81",                # paraphrase corpus -> teammate's 81/81
+        "20-way load": "10-way load",    # revert to teammate's smoke-test concurrency
+        "3 s": "2.4 s",                  # p95 3 s -> 2.4 s (matches resolved table)
     }
     find_and_replace_text(page, replacements)
 
