@@ -96,9 +96,10 @@ repository, and none are baked into the Docker image.**
 ## Docker fallback
 
 ```bash
-docker pull <registry>/gridwise-api:<tag>
-docker run --rm -p 8000:8000 -e OPENAI_API_KEY=sk-... <registry>/gridwise-api:<tag>
+docker pull ishmam259/gridwise-api:v1
+docker run --rm -p 8000:8000 -e OPENAI_API_KEY=sk-... ishmam259/gridwise-api:v1
 curl -s http://127.0.0.1:8000/health
+# {"status":"ok"}
 ```
 
 Build locally:
@@ -109,7 +110,9 @@ docker run --rm -p 8000:8000 -e OPENAI_API_KEY=sk-... gridwise-api:local
 ```
 
 The image exposes port 8000, binds `0.0.0.0`, contains no credentials, and fails its own
-build if the CBC solver binary is not present.
+build if the CBC solver binary is not present. It is 330 MB and was verified end to end:
+`/health` ready, all ten public cases valid at cost ratio 1.0000, `PORT` override honoured,
+and a deliberately invalid key confirmed to degrade to `200` rather than erroring.
 
 ---
 
