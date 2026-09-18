@@ -195,3 +195,13 @@ def test_head_requests_are_accepted_not_405() -> None:
     assert client.head("/").status_code == 200
     # GET behaviour is unchanged.
     assert client.get("/health").json() == {"status": "ok"}
+
+
+def test_root_reports_the_model_without_leaking_the_key() -> None:
+    """The running model must be verifiable from outside; the credential must not be."""
+    body = client.get("/").json()
+    assert body["interpreter"]["provider"] == "openai"
+    assert isinstance(body["interpreter"]["model"], str) and body["interpreter"]["model"]
+    assert isinstance(body["interpreter"]["configured"], bool)
+    assert "sk-" not in client.get("/").text
+    assert "OPENAI_API_KEY" not in client.get("/").text
