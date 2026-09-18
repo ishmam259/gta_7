@@ -12,6 +12,7 @@ class of malformed-output failures before the guardrails even run.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -185,8 +186,14 @@ class OperatorNoteInterpreter:
     def __init__(self) -> None:
         self.model = os.getenv("OPENAI_MODEL", DEFAULT_MODEL)
         self._api_key = os.getenv("OPENAI_API_KEY")
-        timeout = float(os.getenv("OPENAI_TIMEOUT_SECONDS", "12"))
-        retries = int(os.getenv("OPENAI_MAX_RETRIES", "2"))
+        timeout = float(os.getenv("OPENAI_TIMEOUT_SECONDS", "7"))
+        retries = int(os.getenv("OPENAI_MAX_RETRIES", "1"))
+        # Hard ceiling on the whole provider round trip, retries and backoff included.
+        # The SDK bounds each attempt but not the total, and the judge treats a response
+        # beyond 30s as a failure; this guarantees the fallback fires with time to spare.
+        self._budget = float(
+            os.getenv("OPENAI_TOTAL_BUDGET_SECONDS", str(timeout * (retries + 1) + 3))
+        )
         self._client: AsyncOpenAI | None = (
             AsyncOpenAI(api_key=self._api_key, timeout=timeout, max_retries=retries)
             if self._api_key
@@ -208,15 +215,22 @@ class OperatorNoteInterpreter:
             raise InterpreterUnavailable("OPENAI_API_KEY is not configured")
 
         try:
-            completion = await self._client.chat.completions.create(
-                model=self.model,
-                temperature=0,
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": _build_user_prompt(notes, hours, battery)},
-                ],
-                response_format={"type": "json_schema", "json_schema": DIRECTIVE_SCHEMA},
+            completion = await asyncio.wait_for(
+                self._client.chat.completions.create(
+                    model=self.model,
+                    temperature=0,
+                    messages=[
+                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "user", "content": _build_user_prompt(notes, hours, battery)},
+                    ],
+                    response_format={"type": "json_schema", "json_schema": DIRECTIVE_SCHEMA},
+                ),
+                timeout=self._budget,
             )
+        except asyncio.TimeoutError as exc:
+            raise InterpreterUnavailable(
+                f"model provider exceeded the {self._budget:g}s total budget"
+            ) from exc
         except Exception as exc:  # provider error, timeout, quota, network
             raise InterpreterUnavailable(f"model provider call failed: {type(exc).__name__}") from exc
 
