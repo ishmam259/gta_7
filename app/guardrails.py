@@ -97,8 +97,10 @@ def _expand_window(raw_start: Any, raw_end: Any) -> tuple[int, ...]:
         return (start,)
     if end > start:
         return tuple(range(start, min(end, 24)))
-    # Wraps past midnight, e.g. 22:00 -> 02:00.
-    return tuple(range(start, 24)) + tuple(range(0, end))
+    # Wraps past midnight, e.g. 22:00 -> 02:00. The Problem Statement requires the
+    # hours array to be ascending, so the post-midnight hours sort to the front:
+    # 22:00 -> 06:00 is [0, 1, 2, 3, 4, 5, 22, 23], not [22, 23, 0, ...].
+    return tuple(range(0, end)) + tuple(range(start, 24))
 
 
 def _normalize_factor(raw: Any) -> float | None:

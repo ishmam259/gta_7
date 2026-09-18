@@ -14,11 +14,14 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from .guardrails import _expand_window as expand_window
+
 _NEGATION = re.compile(
     r"\b(no|not|do not|don't|cannot|can't|avoid|without|unavailable|suspend(?:ed)?|"
     r"disabled?|paused?|halt(?:ed)?|prohibit(?:ed)?|forbidden|offline|out of service|"
     r"must not|may not|refrain|isolat\w*|de-?energi[sz]\w*|locked out|lockout|"
-    r"maintenance|servicing|shut ?down|taken out|inoperable|unable)\b",
+    r"block(?:ed)?|barred|restrict(?:ed)?|curtail(?:ed)?|off[- ]limits|embargo\w*|"
+    r"prevent(?:ed)?|deni(?:ed|es)|shut ?down|taken out|inoperable|unable)\b",
     re.I,
 )
 _TIME_TOKEN = re.compile(
@@ -26,6 +29,18 @@ _TIME_TOKEN = re.compile(
     re.I,
 )
 _PERCENT = re.compile(r"(\d{1,3}(?:\.\d+)?)\s*(?:%|per\s*cent|percent)", re.I)
+# A number bound to a unit is a quantity, never a clock time. These spans are blanked
+# before the time scan, so "keep at least 20 kWh" cannot be mistaken for 8 PM.
+_UNIT_NUMBER = re.compile(
+    r"\b\d+(?:\.\d+)?\s*(?:%|per\s*cent|percent|kwh|kw\b|bdt|taka|"
+    r"kilowatt[-\s]?hours?|kilowatts?)",
+    re.I,
+)
+_ALL_DAY = re.compile(
+    r"\b(all day|whole day|entire day|full day|throughout the day|throughout today|"
+    r"all of today|at any time today|at all times|round the clock|24 hours)\b",
+    re.I,
+)
 _WORD_FRACTIONS = {
     "half": 50.0,
     "a half": 50.0,
@@ -82,31 +97,58 @@ def _hour_tokens(text: str) -> list[int]:
 
 
 def _window(text: str) -> list[int]:
-    """Map a phrase to a half-open whole-hour window: start inclusive, end exclusive."""
-    hours = _hour_tokens(text)
+    """Map a phrase to a half-open whole-hour window: start inclusive, end exclusive.
+
+    Quantities carrying a unit are blanked first, so "keep at least 20 kWh from 6 PM
+    until 10 PM" reads the window as 18..22 instead of seizing on the 20. Midnight
+    wrapping and the exclusive end are delegated to `guardrails.expand_window`, which
+    is the single definition of that convention.
+    """
+    if _ALL_DAY.search(text):
+        return list(range(24))
+    masked = _UNIT_NUMBER.sub(lambda m: " " * len(m.group(0)), text)
+    hours = _hour_tokens(masked)
     if len(hours) < 2:
         return [hours[0]] if hours else []
-    start, end = hours[0], hours[1]
-    if end <= start:
-        end = start + 1
-    return [h % 24 for h in range(start, min(end, start + 24))]
+    return list(expand_window(hours[0], hours[1]))
+
+
+# Wording immediately in front of the figure that marks it as what REMAINS
+# ("drops to 20%", "leaves roughly one fifth") rather than what is LOST.
+_STATES_REMAINING = re.compile(
+    r"\b(to|at|leaves?|leaving|remain\w*|left|available|usable|treated as|only)\s*"
+    r"(about|roughly|around|approximately|just|nearly)?\s*$",
+    re.I,
+)
+_REDUCTION_WORD = re.compile(r"\b(reduc\w*|drop\w*|down|lower\w*|cut|less|loss|decreas\w*)\b", re.I)
 
 
 def _remaining_factor(text: str) -> float | None:
-    lowered = text.lower()
+    """The fraction of solar still usable, or None when the note gives no figure.
+
+    The figure a note states may be what remains ("drops to 20%") or what is lost
+    ("a 20% drop", "an 80% reduction"). Which one it is depends on the few words
+    immediately before the number, not on whether the note mentions a reduction
+    somewhere -- an earlier version tested the whole sentence and so read the "2"
+    of "to 2 PM" as evidence, inverting every note whose window ended in "to".
+    """
+    lowered = text.lower().replace("-", " ")
     percent = _PERCENT.search(lowered)
-    value: float | None = float(percent.group(1)) if percent else None
-    if value is None:
+    if percent is not None:
+        value: float | None = float(percent.group(1))
+        at = percent.start()
+    else:
+        value, at = None, -1
         for phrase, pct in _WORD_FRACTIONS.items():
-            if phrase in lowered:
-                value = pct
+            found = re.search(r"\b" + re.escape(phrase) + r"\b", lowered)
+            if found is not None:
+                value, at = pct, found.start()
                 break
     if value is None:
         return None
-    reduced = re.search(r"\b(reduc\w*|drop\w*|down|lower\w*|cut|less|loss|decreas\w*)\b", lowered)
-    remains = re.search(r"\b(remain\w*|left|available|usable|treated as|only|to about|to roughly)\b", lowered)
-    # "an 80% reduction" means 20% remains; "drops to 20%" means 20% remains.
-    if reduced and not remains and not re.search(r"\b(to|at)\s*(about|roughly|around)?\s*\d", lowered):
+
+    states_remaining = bool(_STATES_REMAINING.search(lowered[max(0, at - 30):at]))
+    if _REDUCTION_WORD.search(lowered) and not states_remaining:
         value = 100.0 - value
     return round(max(0.0, min(100.0, value)) / 100.0, 6)
 
@@ -144,6 +186,15 @@ def parse_note(index: int, note: str, capacity_kwh: float) -> dict[str, Any]:
     if re.search(r"\bdischarg\w*", lowered) and negated and hours:
         return {**base, "directive_type": "no_discharge_window", "hours": hours}
 
+    if re.search(r"\b(grid|import|feeder|transformer|supply|draw)\b", lowered) and hours:
+        cap = _number_before(text, r"kwh")
+        if cap is not None and re.search(
+            r"(\b(exceed|cap|capped|limit\w*|no more than|at most|maximum|max|"
+            r"at or below|below|under|no higher than|not go above|within)\b|<=|≤)",
+            lowered,
+        ):
+            return {**base, "directive_type": "max_grid_window", "hours": hours, "max_grid_kwh": cap}
+
     if re.search(r"\b(reserve|at least|minimum|no lower than|not fall below|keep)\b", lowered) and hours:
         percent = _PERCENT.search(lowered)
         reserve = _number_before(text, r"kwh")
@@ -156,15 +207,6 @@ def parse_note(index: int, note: str, capacity_kwh: float) -> dict[str, Any]:
                 "hours": hours,
                 "minimum_energy_kwh": round(reserve, 6),
             }
-
-    if re.search(r"\b(grid|import|feeder|transformer|supply|draw)\b", lowered) and hours:
-        cap = _number_before(text, r"kwh")
-        if cap is not None and re.search(
-            r"(\b(exceed|cap|capped|limit\w*|no more than|at most|maximum|max|"
-            r"at or below|below|under|no higher than|not go above|within)\b|<=|≤)",
-            lowered,
-        ):
-            return {**base, "directive_type": "max_grid_window", "hours": hours, "max_grid_kwh": cap}
 
     return base
 

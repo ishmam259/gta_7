@@ -177,7 +177,9 @@ def test_half_open_window_expansion() -> None:
     assert _expand_window(9, 12) == (9, 10, 11)        # 09:00 to 12:00
     assert _expand_window(2, 5) == (2, 3, 4)           # 2 AM until 5 AM
     assert _expand_window(14, 15) == (14,)             # during hour 14
-    assert _expand_window(22, 2) == (22, 23, 0, 1)     # wraps past midnight
+    # Wraps past midnight. Section 5.1 requires every hours array to be ascending,
+    # so the post-midnight hours come first rather than in clock order.
+    assert _expand_window(22, 2) == (0, 1, 22, 23)
     assert _expand_window(20, 24) == (20, 21, 22, 23)  # through end of day
     assert _expand_window(None, None) == ()
     assert _expand_window("x", 5) == ()
