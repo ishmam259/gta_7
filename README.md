@@ -67,8 +67,27 @@ All public cases passed.
 Offline unit + API tests (no API key or network needed — the provider is stubbed):
 
 ```bash
-pytest -q        # 58 passed
+pytest -q        # 233 passed
 ```
+
+### Measure interpretation on wording the public pack never shows
+
+Ten published cases are not a test set: hidden notes restate the same six directives in
+different words. `tests/paraphrase_cases.json` holds 81 notes across 18 phrasing
+families — window wordings, 24-hour and spelled-out clocks, windows that wrap past
+midnight, whole-day notes, fractions written as words, reserves as kWh or as a share of
+capacity, distractors that sound electrical, notes that cancel a restriction, vague
+notes that must stay `no_op`, and notes that try to instruct the interpreter.
+
+```bash
+python scripts/paraphrase_bench.py                 # every family
+python scripts/paraphrase_bench.py factor_lost     # one family
+```
+
+It scores **per family**, which is the point: "90%" says nothing actionable, while
+"every note whose window ends in *until* is off by one hour" says exactly what to fix.
+Current score on `gpt-4o-mini`: **80/81**, with the one miss being a note that names
+three separate non-contiguous hours.
 
 ---
 
@@ -170,8 +189,18 @@ the three totals are derived from `hourly_plan` itself and cannot disagree with 
 
 Before answering, the service replays its own schedule the way the judge does — every
 directive, the energy balance, battery bounds and rate limits, effective-solar ceilings,
-and end-of-day neutrality — and logs any violation. The same module backs the test suite
-and `scripts/smoke_test.py`.
+and end-of-day neutrality — and a plan that breaks any of them is never returned.
+
+If the interpreted directives cannot all be satisfied at once, the service does not ship
+the schedule anyway. It searches for the largest subset of directives that yields a
+genuinely valid plan, prefers the cheapest such plan, and names the directive it had to
+leave out in `plan_summary`. A real scenario is guaranteed feasible under its ground
+truth, so an infeasible set means a note was misread; dropping a directive we invented is
+recoverable, whereas returning a schedule that visibly breaks one never is. The reported
+`directive_interpretation` is untouched either way, so a directive that could not be
+applied is still reported exactly as it was read.
+
+The same module backs the test suite and `scripts/smoke_test.py`.
 
 ---
 
@@ -183,8 +212,12 @@ and `scripts/smoke_test.py`.
 | Model returns an unsupported or unparseable directive | Guardrails downgrade that note to `no_op`; no invented constraint |
 | Provider outage, timeout, or exhausted quota | Logged, then a deterministic emergency parser keeps the service answering `200` |
 | Provider hangs or rate-limits | `INTERPRETER_DEADLINE_SECONDS` caps the whole interpretation step, so per-call timeout × retries can never approach the 30s request limit |
-| Directive set somehow infeasible | Penalised-slack LP returns a best-effort plan instead of a `500` |
+| Directive set cannot all be satisfied | The smallest number of directives is dropped until the schedule is genuinely valid; the omission is logged and stated in `plan_summary` |
+| Nothing is schedulable at all | Penalised-slack LP returns a best-effort plan instead of a `500` |
+| Provider unusually slow on one request | Measured p95 is around 3 s, but individual calls have been seen to take 13 s under provider load. That is inside the interpretation deadline, so the answer is still the model's rather than the emergency parser's; it costs latency score, not correctness |
 | Any unhandled error | Controlled `500`; no stack traces, prompts, or configuration in the response |
+| Battery starting below its own minimum reserve | Self-contradictory once end-of-day neutrality is applied, so no schedule can satisfy both. A best-effort plan is returned with the relaxation stated in `plan_summary`, rather than a `500` or a rejection that would forfeit the case |
+| Degenerate scenario — zero capacity, zero charge rate, flat, zero or negative tariffs, solar far above demand | Solved normally; surplus solar is curtailed, never exported |
 
 The LP solve runs in a worker thread, so concurrent hidden cases do not block the event loop.
 
@@ -251,9 +284,20 @@ app/
   validator.py        Judge-equivalent replay of a finished schedule
   fallback_parser.py  Emergency-only parser for provider outages
   schemas.py          Request/response models
-scripts/smoke_test.py Public-pack runner and scorer
+scripts/
+  smoke_test.py       Public-pack runner and scorer
+  paraphrase_bench.py Interpretation scored per phrasing family (needs a key)
+  keep_warm.py        Keeps a free-tier host from sleeping between judge calls
 samples/              Organizer public sample cases
-tests/                58 offline tests
+tests/                233 offline tests
+  test_api.py                Endpoints, contract, malformed requests
+  test_public_cases.py       The ten published scenarios end to end
+  test_window_expansion.py   Half-open windows, midnight wrap, field precedence
+  test_fallback_parser.py    The emergency parser, including every inversion it once made
+  test_recovery.py           What happens when directives cannot all be honoured
+  test_guardrail_fuzz.py     Malformed model output of every shape
+  test_edge_cases.py         Degenerate batteries, odd prices, the request surface
+  paraphrase_cases.json      81 notes across 18 phrasing families
 ```
 
 ## Dependencies
@@ -274,10 +318,22 @@ and validation strategy are the team's own.
 ## Known limitations
 
 * A note combining two distinct rules yields one directive, per the one-directive-per-note contract.
+* A note naming several non-contiguous hours ("charging is blocked in hours 9, 13 and 17")
+  is the weakest case in the corpus: the model tends to read the first hours as a range.
+  Contiguous windows, which is how every published case is worded, are unaffected.
+* The word "through" ("6 PM through 8 PM") reads as inclusive in ordinary English, while
+  every range in the Problem Statement is half-open. The prompt asks for the half-open
+  reading and the model returns the inclusive one; the statement never uses the word, so
+  neither reading is asserted anywhere.
 * Interpretation quality is bounded by the provider model; `OPENAI_MODEL` can be raised to
   `gpt-4o` for harder paraphrases at some latency cost.
-* The emergency parser covers the common phrasings in the public pack but is deliberately
-  conservative — it prefers `no_op` to a guessed constraint.
+* The emergency parser exists for liveness, not accuracy. It handles the phrasings in the
+  public pack, whole-day wording, windows that wrap past midnight, and figures stated either
+  way round ("a 20% drop" and "drops to 20%"), and it will not read a quantity such as
+  `20 kWh` as a clock hour. It still has no grasp of durations ("for the next three hours"),
+  named windows ("the evening peak"), spelled-out numerals ("six PM"), or fractions outside
+  its small table ("three quarters"), and it maps a note to at most one directive. It prefers
+  `no_op` to a guessed constraint, which is the direction that fails safely.
 * Battery round-trip efficiency is not modelled, matching the Problem Statement's rules.
 
 ## Security
