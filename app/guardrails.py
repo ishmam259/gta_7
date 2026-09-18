@@ -74,6 +74,50 @@ def _clean_hours(raw: Any) -> tuple[int, ...]:
     return tuple(sorted(out))
 
 
+def _window_bound(value: Any, *, upper: int) -> int | None:
+    """Coerce a clock hour to an int within 0..upper, or None if that is not possible."""
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        hour = int(value)
+    except (TypeError, ValueError):
+        return None
+    return hour if 0 <= hour <= upper else None
+
+
+def expand_window(start: Any, end: Any) -> tuple[int, ...]:
+    """Expand a half-open clock range into whole hours.
+
+    The start hour is included and the end hour is excluded (Problem Statement
+    section 5.1), so 18..22 is [18, 19, 20, 21]. A range whose end falls at or
+    before its start wraps through midnight: 22..6 is [22, 23, 0, 1, 2, 3, 4, 5].
+    `end` may be 24, meaning midnight at the close of the day.
+
+    This is the deterministic replacement for asking the model to expand windows
+    itself; the model only reports the two clock times the note named.
+    """
+    first = _window_bound(start, upper=23)
+    last = _window_bound(end, upper=24)
+    if first is None or last is None:
+        return ()
+    if last > first:
+        hours: object = range(first, last)
+    elif last == first:
+        hours = (first,)
+    else:  # wraps past midnight
+        hours = list(range(first, 24)) + list(range(0, last))
+    return tuple(sorted({h % 24 for h in hours}))
+
+
+def _resolve_hours(item: dict[str, Any]) -> tuple[int, ...]:
+    """Hours for a directive: a named range wins, else an explicit list of hours."""
+    window = expand_window(item.get("start_hour"), item.get("end_hour"))
+    if window:
+        return window
+    return _clean_hours(item.get("hours"))
+
+
+
 def _normalize_factor(raw: Any) -> float | None:
     """`factor` is the usable fraction REMAINING, in [0, 1].
 
@@ -108,7 +152,7 @@ def _build_directive(index: int, item: dict[str, Any], battery: Battery) -> Dire
     if directive_type not in SUPPORTED_TYPES:
         return None
 
-    hours = _clean_hours(item.get("hours"))
+    hours = _resolve_hours(item)
     if not hours:
         # A window directive with no valid hours cannot be applied to anything.
         return None
