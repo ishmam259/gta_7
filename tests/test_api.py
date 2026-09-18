@@ -170,3 +170,19 @@ def test_repeated_requests_are_stable(stub_interpreter) -> None:
         assert response.status_code == 200
         costs.add(round(response.json()["total_cost_bdt"], 2))
     assert len(costs) == 1
+
+
+def test_root_is_self_documenting_not_a_404() -> None:
+    """The base URL is the first thing a human opens; it must not look dead."""
+    response = client.get("/")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["endpoints"]["health"] == "GET /health"
+    assert body["endpoints"]["optimize"] == "POST /optimize-energy"
+
+
+def test_root_does_not_disturb_the_judged_contract() -> None:
+    """Adding / must not change /health or the 404 behaviour of unknown paths."""
+    assert client.get("/health").json() == {"status": "ok"}
+    assert client.get("/not-a-real-path").status_code == 404

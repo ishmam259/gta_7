@@ -88,6 +88,25 @@ async def _unhandled_error(_: Request, exc: Exception) -> JSONResponse:
     )
 
 
+@app.get("/")
+async def root() -> dict[str, object]:
+    """Self-documenting landing response.
+
+    Not part of the judged contract, but the base URL is the first thing a human
+    opens, and a bare 404 there reads as a broken deployment.
+    """
+    return {
+        "service": "GridWise - LLM-Assisted Campus Energy Optimizer",
+        "event": "BUP CSE Fest 2026 Hackathon - Online Preliminary",
+        "status": "ok",
+        "endpoints": {
+            "health": "GET /health",
+            "optimize": "POST /optimize-energy",
+            "interactive_docs": "GET /docs",
+        },
+    }
+
+
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}

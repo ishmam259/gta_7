@@ -111,11 +111,26 @@ def test_explicit_hours_are_used_when_no_range_is_given() -> None:
     assert directives[0].hours == (9, 13, 17)
 
 
-def test_a_named_range_wins_over_an_hours_list() -> None:
+def test_a_named_range_and_listed_hours_are_combined() -> None:
+    """Both fields are kept, because a model asked for scattered hours may use both.
+
+    Observed live for "charging is blocked in hours 9, 13 and 17": the answer came
+    back as start_hour 9, end_hour 10 *and* hours [13, 17]. Preferring either field
+    alone silently discarded hours the note had named.
+    """
     _entries, directives = normalize_interpretations(
-        [_item(hours=[3], start_hour=18, end_hour=20)], 1, BATTERY
+        [_item(hours=[13, 17], start_hour=9, end_hour=10)], 1, BATTERY
     )
-    assert directives[0].hours == (18, 19)
+    assert directives[0].hours == (9, 13, 17)
+
+
+def test_combining_is_a_no_op_when_only_one_field_is_set() -> None:
+    _entries, only_window = normalize_interpretations(
+        [_item(start_hour=18, end_hour=20)], 1, BATTERY
+    )
+    _entries, only_listed = normalize_interpretations([_item(hours=[3, 9])], 1, BATTERY)
+    assert only_window[0].hours == (18, 19)
+    assert only_listed[0].hours == (3, 9)
 
 
 def test_hours_list_is_the_fallback_when_the_range_is_unusable() -> None:

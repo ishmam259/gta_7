@@ -112,7 +112,11 @@ def _normalize_factor(raw: Any) -> float | None:
     value = _finite(raw)
     if value is None:
         return None
-    if 1.0 < value <= 100.0:
+    if 2.0 <= value <= 100.0:
+        # A model answering in percent ("25" for 25%) is repaired. Values just above
+        # 1 are not plausible percentages -- 1.5% of forecast solar is not something
+        # an operator note says -- so they stay out of range and become no_op rather
+        # than turning a malformed answer into a near-total blackout.
         value = value / 100.0
     if 0.0 <= value <= 1.0:
         return round(value, 6)
@@ -134,14 +138,22 @@ def _structured_adjustment(directive: Directive) -> dict[str, Any]:
 def _build_directive(index: int, item: dict[str, Any], battery: Battery) -> Directive | None:
     """Return a validated Directive, or None to mean 'downgrade this note to no_op'."""
     directive_type = item.get("directive_type")
-    if directive_type not in SUPPORTED_TYPES:
+    # Membership testing an unhashable value raises rather than returning False, so
+    # confirm we have a string before asking whether it is a directive we support.
+    if not isinstance(directive_type, str) or directive_type not in SUPPORTED_TYPES:
         return None
 
-    # Prefer the half-open window; fall back to an explicit list for the rare
-    # note that names non-contiguous hours.
-    hours = _expand_window(item.get("start_hour"), item.get("end_hour"))
-    if not hours:
-        hours = _clean_hours(item.get("hours"))
+    # Combine the half-open window with any explicitly listed hours. Normally only
+    # one of the two is set and this is a no-op, but a model asked for scattered
+    # hours may split them across both fields -- "hours 9, 13 and 17" has come back
+    # as start_hour 9, end_hour 10 plus hours [13, 17]. Taking the union keeps every
+    # hour the note named; preferring one field silently dropped the rest.
+    hours = tuple(
+        sorted(
+            set(_expand_window(item.get("start_hour"), item.get("end_hour")))
+            | set(_clean_hours(item.get("hours")))
+        )
+    )
     if not hours:
         # A window directive with no valid hours cannot be applied to anything.
         return None
